@@ -1,0 +1,773 @@
+import {
+  ArrowLeft,
+  BarChart3,
+  Columns3,
+  LoaderCircle,
+  Sparkles,
+  Table2,
+} from 'lucide-react'
+
+import {
+  useEffect,
+  useState,
+} from 'react'
+
+import {
+  Link,
+  useNavigate,
+  useParams,
+} from 'react-router'
+
+import DatasetDashboard from '../../components/insights/DatasetDashboard'
+import DatasetGrid from '../../components/insights/DatasetGrid'
+import DatasetSchemaEditor from '../../components/insights/DatasetSchemaEditor'
+
+import {
+  compareCrmVsDataset,
+  compareDatasets,
+  saveInsight,
+} from '../../services/aiInsights.service'
+
+import { getCrmMetricsSnapshot } from '../../services/crmMetrics.service'
+
+import {
+  buildProductBreakdown,
+  summarizeColumn,
+} from '../../services/datasetSummary.service'
+
+import {
+  getDataset,
+  getDatasets,
+  updateCell,
+  updateTableColumns,
+} from '../../services/datasetStorage.service'
+
+import type {
+  DatasetCell,
+  DatasetColumn,
+  DatasetRecord,
+  DatasetTable,
+} from '../../types/dataset.types'
+import { useProject } from '../../context/ProjectContext'
+
+type ViewMode =
+  | 'dashboard'
+  | 'data'
+  | 'columns'
+
+const CRM_TARGET = 'crm'
+
+export default function DatasetDetailPage() {
+  const { datasetId } =
+    useParams()
+
+  const navigate = useNavigate()
+
+  const { activeProject } = useProject()
+
+  const [
+    dataset,
+    setDataset,
+  ] =
+    useState<
+      DatasetRecord | null
+    >(null)
+
+  const [
+    comparisonDatasets,
+    setComparisonDatasets,
+  ] = useState<DatasetRecord[]>([])
+
+  const [
+    selectedTableId,
+    setSelectedTableId,
+  ] =
+    useState('')
+
+  const [
+    view,
+    setView,
+  ] =
+    useState<ViewMode>(
+      'dashboard',
+    )
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true)
+
+  const [
+    compareTarget,
+    setCompareTarget,
+  ] = useState('')
+
+  const [
+    comparing,
+    setComparing,
+  ] = useState(false)
+
+  const [
+    compareError,
+    setCompareError,
+  ] = useState('')
+
+  useEffect(() => {
+    const load =
+      async () => {
+        if (!datasetId) {
+          setLoading(false)
+          return
+        }
+
+        const [result, allDatasets] =
+          await Promise.all([
+            getDataset(activeProject!.id, datasetId),
+            getDatasets(activeProject!.id),
+          ])
+
+        if (result) {
+          setDataset(result)
+
+          setSelectedTableId(
+            result.tables[0]
+              ?.id ?? '',
+          )
+        }
+
+        const compatibleDatasets = result
+          ? allDatasets.filter(
+              (item) =>
+                item.id !== datasetId &&
+                item.sourceType !==
+                  result.sourceType,
+            )
+          : []
+
+        setComparisonDatasets(
+          compatibleDatasets,
+        )
+
+        setCompareTarget(
+          compatibleDatasets[0]?.id ??
+            (result?.sourceType ===
+            'external'
+              ? CRM_TARGET
+              : ''),
+        )
+
+        setLoading(false)
+      }
+
+    void load()
+  }, [datasetId])
+
+  if (loading) {
+    return (
+      <p className="text-sm text-[var(--text-muted)]">
+        Cargando dataset...
+      </p>
+    )
+  }
+
+  if (!dataset) {
+    return (
+      <div>
+        <p className="text-sm text-[var(--text-muted)]">
+          Dataset no encontrado.
+        </p>
+
+        <Link
+          to="/app/datasets"
+          className="mt-4 inline-block text-sm font-medium text-[var(--accent)]"
+        >
+          Volver
+        </Link>
+      </div>
+    )
+  }
+
+  const selectedTable:
+    | DatasetTable
+    | undefined =
+    dataset.tables.find(
+      (table) =>
+        table.id ===
+        selectedTableId,
+    ) ??
+    dataset.tables[0]
+
+  const saveColumns =
+    async (
+      columns:
+        DatasetColumn[],
+    ) => {
+      if (!selectedTable) {
+        return
+      }
+
+      await updateTableColumns(
+        selectedTable.id,
+        columns,
+      )
+
+      setDataset(
+        (current) =>
+          current && {
+            ...current,
+
+            tables:
+              current.tables.map(
+                (table) =>
+                  table.id ===
+                  selectedTable.id
+                    ? {
+                        ...table,
+                        columns,
+                      }
+                    : table,
+              ),
+          },
+      )
+    }
+
+  const saveCell =
+    async (
+      rowId: string,
+      columnKey: string,
+      value: DatasetCell,
+    ) => {
+      if (!selectedTable) {
+        return
+      }
+
+      setDataset(
+        (current) =>
+          current && {
+            ...current,
+
+            tables:
+              current.tables.map(
+                (table) => {
+                  if (
+                    table.id !==
+                    selectedTable.id
+                  ) {
+                    return table
+                  }
+
+                  return {
+                    ...table,
+
+                    rows:
+                      table.rows.map(
+                        (row) =>
+                          row.__rowId ===
+                          rowId
+                            ? {
+                                ...row,
+                                [columnKey]:
+                                  value,
+                              }
+                            : row,
+                      ),
+                  }
+                },
+              ),
+          },
+      )
+
+      await updateCell(
+        selectedTable.id,
+        rowId,
+        columnKey,
+        value,
+      )
+    }
+
+  const runComparison =
+    async () => {
+      if (!selectedTable) {
+        return
+      }
+
+      setComparing(true)
+      setCompareError('')
+
+      try {
+        const crmSnapshot =
+          await getCrmMetricsSnapshot(activeProject!.id)
+
+        if (
+          compareTarget ===
+          CRM_TARGET
+        ) {
+          const columnSummaries =
+            selectedTable.columns
+              .filter(
+                (column) =>
+                  column.visible !==
+                  false,
+              )
+              .map((column) =>
+                summarizeColumn(
+                  column,
+                  selectedTable.rows.map(
+                    (row) =>
+                      row[
+                        column.key
+                      ],
+                  ),
+                ),
+              )
+              .filter(
+                (
+                  summary,
+                ): summary is NonNullable<
+                  typeof summary
+                > =>
+                  summary !== null,
+              )
+
+          const analysis =
+            await compareCrmVsDataset(
+              {
+                crmSnapshot,
+                datasetName:
+                  dataset.name,
+                tableName:
+                  selectedTable.name,
+                columnSummaries,
+              },
+            )
+
+          const saved =
+            await saveInsight({
+              projectId: activeProject!.id,
+              analysis,
+              comparisonMode:
+                'crm',
+              datasetId:
+                dataset.id,
+              tableId:
+                selectedTable.id,
+              comparedDatasetId:
+                null,
+              crmSnapshot,
+              externalSnapshot:
+                columnSummaries,
+            })
+
+          navigate(
+            `/app/insights/${saved.id}`,
+          )
+
+          return
+        }
+
+        const comparedDataset =
+          await getDataset(activeProject!.id,
+            compareTarget,
+          )
+
+        if (
+          !comparedDataset ||
+          comparedDataset.tables.length ===
+            0
+        ) {
+          throw new Error(
+            'No se pudo cargar el dataset seleccionado para comparar.',
+          )
+        }
+
+        if (
+          comparedDataset.sourceType ===
+          dataset.sourceType
+        ) {
+          throw new Error(
+            'La comparación debe cruzar un dataset Mío con uno de Competencia.',
+          )
+        }
+
+        const currentIsInternal =
+          dataset.sourceType ===
+          'internal'
+
+        const internalDataset =
+          currentIsInternal
+            ? dataset
+            : comparedDataset
+
+        const externalDataset =
+          currentIsInternal
+            ? comparedDataset
+            : dataset
+
+        const internalTable =
+          currentIsInternal
+            ? selectedTable
+            : comparedDataset.tables[0]
+
+        const externalTable =
+          currentIsInternal
+            ? comparedDataset.tables[0]
+            : selectedTable
+
+        const internalBreakdown =
+          buildProductBreakdown(
+            internalTable,
+          )
+
+        const externalBreakdown =
+          buildProductBreakdown(
+            externalTable,
+          )
+
+        const analysis =
+          await compareDatasets({
+            crmSnapshot,
+            internalName:
+              internalDataset.name,
+            externalName:
+              externalDataset.name,
+            internalBreakdown,
+            externalBreakdown,
+          })
+
+        const saved =
+          await saveInsight({
+            projectId: activeProject!.id,
+            analysis,
+            comparisonMode:
+              'datasets',
+            datasetId: dataset.id,
+            tableId:
+              selectedTable.id,
+            comparedDatasetId:
+              comparedDataset.id,
+            crmSnapshot,
+            externalSnapshot: {
+              internalBreakdown,
+              externalBreakdown,
+            },
+          })
+
+        navigate(
+          `/app/insights/${saved.id}`,
+        )
+      } catch (exception) {
+        setCompareError(
+          exception instanceof
+            Error
+            ? exception.message
+            : 'No se pudo generar el analisis.',
+        )
+      } finally {
+        setComparing(false)
+      }
+    }
+
+  const visibleCount =
+    selectedTable
+      ?.columns
+      .filter(
+        (column) =>
+          column.visible !==
+          false,
+      )
+      .length ?? 0
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <Link
+          to="/app/datasets"
+          className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+        >
+          <ArrowLeft size={16} />
+          Datasets
+        </Link>
+
+        <div className="mt-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
+              {dataset.extension}
+            </p>
+
+            <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-[10px] font-semibold text-[var(--accent)]">
+              {dataset.sourceType ===
+              'internal'
+                ? 'Mío'
+                : 'Competencia'}
+            </span>
+          </div>
+
+          <h2 className="mt-1 break-all text-2xl font-semibold text-[var(--text-primary)]">
+            {dataset.name}
+          </h2>
+
+          <p className="mt-2 text-sm text-[var(--text-muted)]">
+            {dataset.truncated
+              ? `Mostrando ${selectedTable?.rows.length.toLocaleString('es-PE') ?? 0} de ${dataset.totalRows.toLocaleString('es-PE')} filas`
+              : `${selectedTable?.rows.length.toLocaleString('es-PE') ?? 0} filas`}{' '}
+            ·{' '}
+            {visibleCount}{' '}
+            columnas visibles
+          </p>
+        </div>
+      </section>
+
+      <section className="flex gap-1 rounded-xl border border-[var(--border-soft)] bg-[var(--surface)] p-1">
+        <button
+          type="button"
+          onClick={() =>
+            setView(
+              'dashboard',
+            )
+          }
+          className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+            view ===
+            'dashboard'
+              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+              : 'text-[var(--text-secondary)]'
+          }`}
+        >
+          <BarChart3 size={16} />
+          Dashboard
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            setView('data')
+          }
+          className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+            view === 'data'
+              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+              : 'text-[var(--text-secondary)]'
+          }`}
+        >
+          <Table2 size={16} />
+          Datos
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            setView(
+              'columns',
+            )
+          }
+          className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition ${
+            view ===
+            'columns'
+              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+              : 'text-[var(--text-secondary)]'
+          }`}
+        >
+          <Columns3 size={16} />
+          Columnas
+        </button>
+      </section>
+
+      {dataset.tables.length >
+        1 && (
+        <section className="flex gap-2 overflow-x-auto">
+          {dataset.tables.map(
+            (table) => (
+              <button
+                type="button"
+                key={
+                  table.id
+                }
+                onClick={() =>
+                  setSelectedTableId(
+                    table.id,
+                  )
+                }
+                className={`whitespace-nowrap rounded-xl border px-4 py-2 text-sm ${
+                  selectedTable?.id ===
+                  table.id
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)]'
+                }`}
+              >
+                {
+                  table.name
+                }
+              </button>
+            ),
+          )}
+        </section>
+      )}
+
+      {selectedTable &&
+        view ===
+          'dashboard' && (
+          <>
+            <DatasetDashboard
+              dataset={
+                dataset
+              }
+              table={
+                selectedTable
+              }
+            />
+
+            <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
+                  <Sparkles
+                    size={18}
+                  />
+                </div>
+
+                <div>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                    Analista IA
+                  </p>
+
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Este dataset es{' '}
+                    {dataset.sourceType ===
+                    'internal'
+                      ? 'Mío: elige el dataset de Competencia que quieras comparar.'
+                      : 'de Competencia: elige uno de tus datasets propios para compararlo.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <select
+                  value={
+                    compareTarget
+                  }
+                  onChange={(
+                    event,
+                  ) =>
+                    setCompareTarget(
+                      event
+                        .target
+                        .value,
+                    )
+                  }
+                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] px-3 py-3 text-sm text-[var(--text-primary)] sm:w-80"
+                >
+                  {comparisonDatasets.length ===
+                    0 &&
+                    dataset.sourceType ===
+                      'internal' && (
+                      <option value="">
+                        No hay datasets de Competencia
+                      </option>
+                    )}
+
+                  {comparisonDatasets.map(
+                    (item) => (
+                      <option
+                        key={
+                          item.id
+                        }
+                        value={
+                          item.id
+                        }
+                      >
+                        {
+                          item.name
+                        }{' '}
+                        (
+                        {item.sourceType ===
+                        'internal'
+                          ? 'Mío'
+                          : 'Competencia'}
+                        )
+                      </option>
+                    ),
+                  )}
+
+                  {dataset.sourceType ===
+                    'external' && (
+                    <option
+                      value={CRM_TARGET}
+                    >
+                      Mis ventas registradas (CRM)
+                    </option>
+                  )}
+                </select>
+
+                <button
+                  type="button"
+                  disabled={
+                    comparing ||
+                    !compareTarget
+                  }
+                  onClick={
+                    runComparison
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {comparing ? (
+                    <LoaderCircle
+                      size={16}
+                      className="animate-spin"
+                    />
+                  ) : (
+                    <Sparkles
+                      size={16}
+                    />
+                  )}
+
+                  {comparing
+                    ? 'Analizando...'
+                    : 'Comparar y generar Insight'}
+                </button>
+              </div>
+
+              {comparisonDatasets.length ===
+                0 && (
+                <p className="mt-3 text-xs text-[var(--text-muted)]">
+                  {dataset.sourceType ===
+                  'internal'
+                    ? 'Clasifica al menos otro dataset como Competencia para habilitar la comparación.'
+                    : 'Todavía no hay datasets Míos; puedes comparar temporalmente contra las ventas del CRM.'}
+                </p>
+              )}
+
+              {compareError && (
+                <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-500">
+                  {compareError}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+
+      {selectedTable &&
+        view ===
+          'data' && (
+          <DatasetGrid
+            table={
+              selectedTable
+            }
+            onCellChange={
+              saveCell
+            }
+          />
+        )}
+
+      {selectedTable &&
+        view ===
+          'columns' && (
+          <DatasetSchemaEditor
+            columns={
+              selectedTable.columns
+            }
+            onSave={
+              saveColumns
+            }
+          />
+        )}
+    </div>
+  )
+}
