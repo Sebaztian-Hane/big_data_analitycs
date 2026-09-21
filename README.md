@@ -37,7 +37,7 @@ Configura estas variables **solo en secretos de Edge Functions**, con el mismo v
 
 ```bash
 supabase secrets set MY_AI_INTEGRATION_ENABLED=true
-supabase secrets set ERP_BRIDGE_SECRET=... 
+supabase secrets set ERP_BRIDGE_SECRET=...
 supabase secrets set ERP_BRIDGE_ISSUER=qpjospkmuloxbpmdmhmg
 supabase secrets set ERP_BRIDGE_AUDIENCE=nwpzaqzzrpwncpdanxbx
 supabase secrets set MY_AI_REGISTER_URL=https://nwpzaqzzrpwncpdanxbx.supabase.co/functions/v1/erp-project-register
