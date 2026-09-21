@@ -23,9 +23,28 @@ Variables públicas del frontend:
 VITE_SUPABASE_URL=https://PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=...
 VITE_GEMINI_API_KEY=... # integración actual de IA
+# Muestra el control de registro de My_AI únicamente a administradores ERP.
+VITE_MY_AI_INTEGRATION_UI=true
 ```
 
 Nunca añadas `SUPABASE_SERVICE_ROLE_KEY` ni `RESEND_API_KEY` a variables `VITE_*`.
+
+## Integración con My_AI
+
+La función `my-ai-project-register` conecta ambos servicios sin acceso directo entre sus bases de datos. Un administrador del ERP que ya cambió su contraseña puede registrar el `id` y nombre del proyecto en My_AI. No transmite miembros, perfiles, credenciales biométricas ni roles. El proyecto creado en My_AI queda deshabilitado hasta que un `biometric_admin` lo habilite y asigne accesos allí.
+
+Configura estas variables **solo en secretos de Edge Functions**, con el mismo valor aleatorio de al menos 32 bytes para `ERP_BRIDGE_SECRET` en ambos proyectos:
+
+```bash
+supabase secrets set MY_AI_INTEGRATION_ENABLED=true
+supabase secrets set ERP_BRIDGE_SECRET=... 
+supabase secrets set ERP_BRIDGE_ISSUER=qpjospkmuloxbpmdmhmg
+supabase secrets set ERP_BRIDGE_AUDIENCE=nwpzaqzzrpwncpdanxbx
+supabase secrets set MY_AI_REGISTER_URL=https://nwpzaqzzrpwncpdanxbx.supabase.co/functions/v1/erp-project-register
+supabase functions deploy my-ai-project-register
+```
+
+No habilites `VITE_MY_AI_INTEGRATION_UI` en Vercel hasta que esos secretos estén configurados y la función receptora `erp-project-register` de My_AI esté desplegada.
 
 ## Despliegue de Supabase y Resend
 
