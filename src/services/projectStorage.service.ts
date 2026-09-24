@@ -40,10 +40,10 @@ export async function getProjectMembers(projectId: string): Promise<ProjectMembe
   if (error) throw toError(error)
   const ids = (data ?? []).map((member) => member.user_id)
   if (!ids.length) return []
-  const { data: profiles, error: profileError } = await supabase.from('profiles').select('id,email,full_name').in('id', ids)
+  const { data: profiles, error: profileError } = await supabase.from('profiles').select('id,email,full_name,role').in('id', ids)
   if (profileError) throw toError(profileError)
   const profileMap = new Map((profiles ?? []).map((profile) => [profile.id, profile]))
-  return (data ?? []).map((member) => ({ userId: member.user_id, email: profileMap.get(member.user_id)?.email ?? '', fullName: profileMap.get(member.user_id)?.full_name ?? null, joinedAt: member.joined_at }))
+  return (data ?? []).map((member) => ({ userId: member.user_id, email: profileMap.get(member.user_id)?.email ?? '', fullName: profileMap.get(member.user_id)?.full_name ?? null, role: profileMap.get(member.user_id)?.role ?? 'worker', joinedAt: member.joined_at }))
 }
 
 export async function getAssignableUsers(projectId: string) {
@@ -56,10 +56,25 @@ export async function getAssignableUsers(projectId: string) {
   return (profilesResult.data ?? []).filter((profile) => !memberIds.has(profile.id))
 }
 
-export async function addMember(projectId: string, userId: string) {
-  const { data } = await supabase.auth.getUser()
-  const { error } = await supabase.from('project_members').insert({ project_id: projectId, user_id: userId, added_by: data.user?.id })
+export interface MemberInvitationResult {
+  memberAdded: boolean
+  notificationSent: boolean
+  message: string
+}
+
+async function sendMemberInvitation(projectId: string, userId: string, action: 'add' | 'resend') {
+  const { data, error } = await supabase.functions.invoke('add-project-member', { body: { projectId, userId, action } })
   if (error) throw toError(error)
+  if (!data || typeof data.message !== 'string') throw new Error('La respuesta de invitación no es válida.')
+  return data as MemberInvitationResult
+}
+
+export async function addMember(projectId: string, userId: string) {
+  return await sendMemberInvitation(projectId, userId, 'add')
+}
+
+export async function resendMemberInvitation(projectId: string, userId: string) {
+  return await sendMemberInvitation(projectId, userId, 'resend')
 }
 
 export async function removeMember(projectId: string, userId: string) {

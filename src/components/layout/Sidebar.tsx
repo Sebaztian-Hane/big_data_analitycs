@@ -23,7 +23,6 @@ const analysisItems: Item[] = [
 ]
 
 const administrationItems: Item[] = [
-  { label: 'Proyectos', path: '/admin/proyectos', icon: FolderOpen, admin: true },
   { label: 'Solicitudes', path: '/admin/solicitudes', icon: ClipboardList, admin: true },
   { label: 'Usuarios y permisos', path: '/admin/usuarios', icon: UserCog, admin: true },
   { label: 'Auditoría', path: '/admin/auditoria', icon: ScrollText, admin: true },
@@ -57,6 +56,7 @@ export default function Sidebar({ open, onClose }: Props) {
         {activeProject && <div className="mb-4 rounded-xl border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Proyecto activo</p><p className="mt-1 truncate text-xs font-semibold text-[var(--text-primary)]">{activeProject.name}</p></div>}
         <MenuGroup title="Operación" items={visible(operationItems)} onClose={onClose} />
         <MenuGroup title="Datos y análisis" items={visible(analysisItems)} onClose={onClose} />
+        <MenuGroup title="Colaboración" items={[{ label: 'Mis proyectos', path: '/app/proyectos', icon: FolderOpen }]} onClose={onClose} />
         <MenuGroup title="Administración" items={visible(administrationItems)} onClose={onClose} />
       </nav>
     </aside>

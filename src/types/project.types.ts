@@ -10,6 +10,7 @@ export interface ProjectMember {
   userId: string
   email: string
   fullName: string | null
+  role: 'admin' | 'analyst' | 'worker'
   joinedAt: string
 }
 
